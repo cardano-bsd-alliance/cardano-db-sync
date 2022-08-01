@@ -1,5 +1,14 @@
 # Revision history for cardano-db-sync
 
+## 13.0.3
+* Integrated the fix for the missused minfee function in ledger (https://github.com/input-output-hk/cardano-ledger/pull/2938)
+
+## 13.0.2
+* Integrated the fix of the obsolete check in the new 'Praos' protocol (https://github.com/input-output-hk/ouroboros-network/pull/3891)
+
+## 13.0.1
+* Ensure Babbage TxOut decoder can't fail due to malformed Ptr. This bug manifests itself if db-sync is running in the Babbage era and shuts down, it has to re-sync from an Alonzo snapshot, or from Genesis if it doesn't exist. (#1181)
+
 ## 13.0.0
 * Added `--disable-ledger` flag, which significantly reduces memory usage. Read more at `doc/configuration.md`.
 * Reduction in memory usage.
