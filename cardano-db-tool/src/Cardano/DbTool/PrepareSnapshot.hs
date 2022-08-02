@@ -95,10 +95,10 @@ runPrepareSnapshotAux firstTry args = do
                         Nothing -> ""
                         Just majorV -> "schema-" ++ show majorV
           cmdStr = "Create a snapshot with:\n"
-                ++ case os of
-                      "freebsd" -> "     cardano-db-sync-pgsql-setup"
-                      _         -> "     scripts/postgresql-setup.sh"
-                ++ " --create-snapshot db-sync-snapshot-"
+                      ++ case os of
+                          "freebsd" -> "     cardano-db-sync-pgsql-setup"
+                          _otherwise -> "     scripts/postgresql-setup.sh"
+                      ++ " --create-snapshot db-sync-snapshot-"
       putStrLn $ concat
         [ cmdStr
         , majorStr
