@@ -27,6 +27,8 @@ module Test.Cardano.Db.Mock.Validate
   , assertRewardCounts
   , assertEpochStake
   , assertEpochStakeEpoch
+  , assertNonZeroFeesContract
+  , assertDatumCBOR
   , assertAlonzoCounts
   , assertScriptCert
   , assertPoolCounters
@@ -232,7 +234,7 @@ assertRewardCounts env st filterAddr mEpoch expected = do
     updateMap :: (Reward, ByteString)
               -> Map ByteString (Word64, Word64, Word64, Word64, Word64)
               -> Map ByteString (Word64, Word64, Word64, Word64, Word64)
-    updateMap (rew, addr) res = Map.alter (Just . updateAddrCounters rew) addr res
+    updateMap (rew, addr) = Map.alter (Just . updateAddrCounters rew) addr
 
     filterEpoch rw = case mEpoch of
       Nothing -> val True
@@ -263,6 +265,25 @@ assertEpochStakeEpoch env e expected =
             where_ (a ^. EpochStakeEpochNo ==. val e)
             pure countRows
           )
+
+assertNonZeroFeesContract :: DBSyncEnv -> IO ()
+assertNonZeroFeesContract env =
+    assertEqBackoff env q 0 defaultDelays "Found contract tx with zero fees"
+  where
+    q :: ReaderT SqlBackend (NoLoggingT IO) Word64
+    q = maybe 0 unValue . listToMaybe <$> (select . from $ \tx -> do
+          where_ (tx  ^. TxFee ==. val (DbLovelace 0))
+          where_ (tx ^. TxValidContract ==. val False)
+          pure countRows)
+
+assertDatumCBOR :: DBSyncEnv -> ByteString -> IO ()
+assertDatumCBOR env bs =
+    assertEqBackoff env q 1 defaultDelays "Datum bytes not found"
+  where
+    q :: ReaderT SqlBackend (NoLoggingT IO) Word64
+    q = maybe 0 unValue . listToMaybe <$> (select . from $ \datum -> do
+          where_ (datum ^. DatumBytes ==. val bs)
+          pure countRows)
 
 assertAlonzoCounts :: DBSyncEnv -> (Word64, Word64, Word64, Word64, Word64, Word64, Word64, Word64) -> IO ()
 assertAlonzoCounts env expected =
