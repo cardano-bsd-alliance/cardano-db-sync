@@ -12,7 +12,6 @@ module Cardano.Mock.Forging.Tx.Babbage
   ( BabbageUTxOIndex
   , BabbageLedgerState
   , TxOutScriptType (..)
-  , DatumType (..)
   , ReferenceScript (..)
   , consTxBody
   , addValidityInterval
@@ -21,6 +20,7 @@ module Cardano.Mock.Forging.Tx.Babbage
   , mkPaymentTx
   , mkPaymentTx'
   , scriptSucceeds
+  , hasInlineDatum
   , getInlineScript
   , mkLockByScriptTx
   , mkOutFromType
@@ -50,7 +50,6 @@ module Cardano.Mock.Forging.Tx.Babbage
 
 import           Cardano.Prelude hiding (sum, (.))
 
-import           Data.ByteString.Short (ShortByteString)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import qualified Data.Maybe.Strict as Strict
@@ -98,12 +97,7 @@ type BabbageLedgerState = LedgerState (ShelleyBlock PraosStandard StandardBabbag
 
 data TxOutScriptType
   = TxOutNoInline Bool -- nothing is inlined, like in Alonzo
-  | TxOutInline Bool DatumType ReferenceScript -- validScript, inlineDatum, reference script
-
-data DatumType
-  = NotInlineDatum
-  | InlineDatum
-  | InlineDatumCBOR ShortByteString
+  | TxOutInline Bool Bool ReferenceScript -- validScript, inlineDatum, reference script
 
 data ReferenceScript
   = NoReferenceScript
@@ -201,10 +195,10 @@ scriptSucceeds st =
     TxOutNoInline sc -> sc
     TxOutInline sc _ _ -> sc
 
-getDatum :: TxOutScriptType -> DatumType
-getDatum st =
+hasInlineDatum :: TxOutScriptType -> Bool
+hasInlineDatum st =
   case st of
-    TxOutNoInline {} -> NotInlineDatum
+    TxOutNoInline {} -> False
     TxOutInline _ inl _ -> inl
 
 getInlineScript :: TxOutScriptType -> StrictMaybe Bool
@@ -233,10 +227,7 @@ mkOutFromType :: Integer -> TxOutScriptType -> TxOut StandardBabbage
 mkOutFromType amount txOutType =
     let outAddress = if scriptSucceeds txOutType then alwaysSucceedsScriptAddr else alwaysFailsScriptAddr
         datahash = hashData @StandardBabbage plutusDataList
-        dt = case getDatum txOutType of
-          NotInlineDatum -> DatumHash datahash
-          InlineDatum -> Datum (dataToBinaryData plutusDataList)
-          InlineDatumCBOR sbs -> Datum $ either error id $ makeBinaryData sbs
+        dt = if hasInlineDatum txOutType then Datum (dataToBinaryData plutusDataList) else DatumHash datahash
         scpt = case getInlineScript txOutType of
           Strict.SNothing -> Strict.SNothing
           Strict.SJust True -> Strict.SJust alwaysSucceedsScript
@@ -277,7 +268,7 @@ mkUnlockScriptTxBabbage inputIndex colInputIndex outputIndex refInput compl succ
       (mapMaybe mkScriptInp $ zip [0..] inputPairs)
       $ consPaymentTxBody inpts colInput refInpts (StrictSeq.fromList [output]) colOut (Coin fees) mempty
   where
-    collTxOutType = if compl then Just $ TxOutInline True InlineDatum (ReferenceScript True)
+    collTxOutType = if compl then Just $ TxOutInline True True (ReferenceScript True)
                     else Just $ TxOutNoInline True
 
 mkScriptInp :: (Word64, (TxIn StandardCrypto, Core.TxOut StandardBabbage))

@@ -112,11 +112,11 @@ in {
       };
       explorerConfig = lib.mkOption {
         type = lib.types.attrs;
-        default = cfg.environment.dbSyncConfig;
+        default = cfg.environment.explorerConfig;
       };
       logConfig = lib.mkOption {
         type = lib.types.attrs;
-        default = {};
+        default = self.cardanoLib.defaultExplorerLogConfig;
       };
       socketPath = lib.mkOption {
         type = lib.types.nullOr lib.types.path;
@@ -200,8 +200,8 @@ in {
           --config ${configFile} \
           --socket-path "$CARDANO_NODE_SOCKET_PATH" \
           --schema-dir ${self.schema or (self.src + "/schema")} \
-          --state-dir ${cfg.stateDir} \
-          ''${EXTRA_DB_SYNC_ARGS:-}'';
+          --state-dir ${cfg.stateDir}
+      '';
     };
     systemd.services.cardano-db-sync = {
       wantedBy = [ "multi-user.target" ];

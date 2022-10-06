@@ -213,8 +213,7 @@ insertTx tracer cache network isMember blkId epochNo slotNo blockIndex tx groupe
         !withdrawalSum = fromIntegral $ unCoin $ Generic.txWithdrawalSum tx
     !resolvedInputs <- mapM (resolveTxInputs (fst <$> groupedTxOut grouped)) (Generic.txInputs tx)
     let !inSum = sum $ map (unDbLovelace . thrd3) resolvedInputs
-    let diffSum = if inSum >= outSum then inSum - outSum else 0
-    let !fees = maybe diffSum (fromIntegral . unCoin) (Generic.txFees tx)
+    let !fees = maybe inSum (fromIntegral . unCoin) (Generic.txFees tx)
     let !txHash = Generic.txHash tx
     -- Insert transaction and get txId from the DB.
     !txId <- lift . DB.insertTx $

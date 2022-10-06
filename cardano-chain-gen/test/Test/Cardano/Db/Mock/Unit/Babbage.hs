@@ -14,7 +14,6 @@ import           Control.Monad
 import           Control.Monad.Class.MonadSTM.Strict
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Short as SBS
 import qualified Data.Map as Map
 import           Data.Text (Text)
 
@@ -77,7 +76,6 @@ unitTests iom knownMigrations =
           , test "sync bigger chain" bigChain
           , test "rollback while db-sync is off" restartAndRollback
           , test "rollback further" rollbackFurther
-          , test "rollback stake address cache" stakeAddressRollback
           ]
       , testGroup "different configs"
           [ test "genesis config without pool" configNoPools
@@ -122,7 +120,6 @@ unitTests iom knownMigrations =
           [ test "simple script lock" simpleScript
           , test "unlock script in same block" unlockScriptSameBlock
           , test "failed script" failedScript
-          , test "failed script fees" failedScriptFees
           , test "failed script in same block" failedScriptSameBlock
           , test "multiple scripts unlocked" multipleScripts
           , test "multiple scripts unlocked same block" multipleScriptsSameBlock
@@ -152,7 +149,6 @@ unitTests iom knownMigrations =
       , testGroup "Babbage inline and reference"
           [ test "spend inline datum" unlockDatumOutput
           , test "spend inline datum same block" unlockDatumOutputSameBlock
-          , test "inline datum with non canonical CBOR" inlineDatumCBOR
           , test "spend reference script" spendRefScript
           , test "spend reference script same block" spendRefScriptSameBlock
           , test "spend collateral output of invalid tx" spendCollateralOutput
@@ -323,27 +319,6 @@ rollbackFurther =
     assertEqQuery dbSync DB.queryCostModel [cm1] "Unexpected CostModel"
   where
     testLabel = "rollbackFurther"
-
-stakeAddressRollback :: IOManager -> [(Text, Text)] -> Assertion
-stakeAddressRollback =
-  withFullConfig babbageConfig testLabel $ \interpreter mockServer dbSync -> do
-    startDBSync  dbSync
-    blk <- forgeNextFindLeaderAndSubmit interpreter mockServer []
-    blk' <- withBabbageFindLeaderAndSubmit interpreter mockServer $ \st -> do
-      let poolId = resolvePool (PoolIndex 0) st
-      tx1 <- Babbage.mkSimpleDCertTx
-              [ (StakeIndexNew 1, DCertDeleg . RegKey)
-              , (StakeIndexNew 1, \stCred -> DCertDeleg $ Delegate $ Delegation stCred poolId) ]
-              st
-      Right [tx1]
-    assertBlockNoBackoff dbSync 2
-    atomically $ rollback mockServer (blockPoint blk)
-    assertBlockNoBackoff dbSync 1
-    atomically $ addBlock mockServer blk'
-    void $ forgeNextFindLeaderAndSubmit interpreter mockServer []
-    assertBlockNoBackoff dbSync 3
-  where
-    testLabel = "stakeAddressRollback"
 
 configNoPools :: IOManager -> [(Text, Text)] -> Assertion
 configNoPools =
@@ -1179,24 +1154,6 @@ failedScript =
   where
     testLabel = "failedScript"
 
-failedScriptFees :: IOManager -> [(Text, Text)] -> Assertion
-failedScriptFees =
-    withFullConfig babbageConfig testLabel $ \interpreter mockServer dbSync -> do
-      startDBSync  dbSync
-
-      tx0 <- withBabbageLedgerState interpreter $ Babbage.mkLockByScriptTx (UTxOIndex 0) [Babbage.TxOutNoInline False] 20000 20000
-      void $ forgeNextAndSubmit interpreter mockServer $ MockBlock [TxBabbage tx0] (NodeId 1)
-
-      let utxo0 = head (Babbage.mkUTxOBabbage tx0)
-      void $ withBabbageFindLeaderAndSubmitTx interpreter mockServer $
-        Babbage.mkUnlockScriptTx [UTxOPair utxo0] (UTxOIndex 1) (UTxOIndex 2) False 10000 500
-
-      assertBlockNoBackoff dbSync 2
-      assertAlonzoCounts dbSync (0,0,0,0,1,0,1,1)
-      assertNonZeroFeesContract dbSync
-  where
-    testLabel = "failedScriptFees"
-
 failedScriptSameBlock :: IOManager -> [(Text, Text)] -> Assertion
 failedScriptSameBlock =
     withFullConfig babbageConfig testLabel $ \interpreter mockServer dbSync -> do
@@ -1673,7 +1630,7 @@ unlockDatumOutput =
 
       -- We don't use withBabbageFindLeaderAndSubmitTx here, because we want access to the tx.
       tx0 <- withBabbageLedgerState interpreter
-        $ Babbage.mkLockByScriptTx (UTxOIndex 0) [Babbage.TxOutInline True Babbage.InlineDatum Babbage.NoReferenceScript] 20000 20000
+        $ Babbage.mkLockByScriptTx (UTxOIndex 0) [Babbage.TxOutInline True True Babbage.NoReferenceScript] 20000 20000
       void $ forgeNextAndSubmit interpreter mockServer $ MockBlock [TxBabbage tx0] (NodeId 1)
 
       let utxo0 = head (Babbage.mkUTxOBabbage tx0)
@@ -1695,7 +1652,7 @@ unlockDatumOutputSameBlock =
       -- inputs and adding unnnecessary fields to the collateral output.
       txs' <- withBabbageLedgerState interpreter $ \st -> do
         tx0 <- Babbage.mkLockByScriptTx (UTxOIndex 0)
-                [Babbage.TxOutInline True Babbage.InlineDatum Babbage.NoReferenceScript, Babbage.TxOutInline True Babbage.NotInlineDatum (Babbage.ReferenceScript False)]
+                [Babbage.TxOutInline True True Babbage.NoReferenceScript, Babbage.TxOutInline True False (Babbage.ReferenceScript False)]
                 20000 20000 st
         let utxo0 = head (Babbage.mkUTxOBabbage tx0)
         tx1 <- Babbage.mkUnlockScriptTxBabbage [UTxOPair utxo0] (UTxOIndex 1) (UTxOIndex 2)
@@ -1708,22 +1665,6 @@ unlockDatumOutputSameBlock =
   where
     testLabel = "unlockDatumOutputSameBlock"
 
-inlineDatumCBOR :: IOManager -> [(Text, Text)] -> Assertion
-inlineDatumCBOR =
-    withFullConfig babbageConfig testLabel $ \interpreter mockServer dbSync -> do
-      startDBSync  dbSync
-      void $ registerAllStakeCreds interpreter mockServer
-
-      -- We don't use withBabbageFindLeaderAndSubmitTx here, because we want access to the tx.
-      tx0 <- withBabbageLedgerState interpreter
-        $ Babbage.mkLockByScriptTx (UTxOIndex 0) [Babbage.TxOutInline True (Babbage.InlineDatumCBOR plutusDataEncLen) Babbage.NoReferenceScript] 20000 20000
-      void $ forgeNextAndSubmit interpreter mockServer $ MockBlock [TxBabbage tx0] (NodeId 1)
-
-      assertBlockNoBackoff dbSync 2
-      assertDatumCBOR dbSync $ SBS.fromShort plutusDataEncLen
-  where
-    testLabel = "inlineDatumCBOR"
-
 spendRefScript :: IOManager -> [(Text, Text)] -> Assertion
 spendRefScript =
     withFullConfig babbageConfig testLabel $ \interpreter mockServer dbSync -> do
@@ -1732,7 +1673,7 @@ spendRefScript =
 
       -- We don't use withBabbageFindLeaderAndSubmitTx here, because we want access to the tx.
       tx0 <- withBabbageLedgerState interpreter
-        $ Babbage.mkLockByScriptTx (UTxOIndex 0) [Babbage.TxOutInline True Babbage.NotInlineDatum (Babbage.ReferenceScript True)] 20000 20000
+        $ Babbage.mkLockByScriptTx (UTxOIndex 0) [Babbage.TxOutInline True False (Babbage.ReferenceScript True)] 20000 20000
       void $ forgeNextAndSubmit interpreter mockServer $ MockBlock [TxBabbage tx0] (NodeId 1)
 
       let utxo0 = head (Babbage.mkUTxOBabbage tx0)
@@ -1752,8 +1693,8 @@ spendRefScriptSameBlock =
 
       txs' <- withBabbageLedgerState interpreter $ \st -> do
         tx0 <- Babbage.mkLockByScriptTx (UTxOIndex 0)
-                [ Babbage.TxOutInline True Babbage.NotInlineDatum (Babbage.ReferenceScript True)
-                , Babbage.TxOutInline True Babbage.NotInlineDatum (Babbage.ReferenceScript False)]
+                [ Babbage.TxOutInline True False (Babbage.ReferenceScript True)
+                , Babbage.TxOutInline True False (Babbage.ReferenceScript False)]
                 20000 20000 st
         let utxo0 = head (Babbage.mkUTxOBabbage tx0)
         tx1 <- Babbage.mkUnlockScriptTxBabbage [UTxOPair utxo0] (UTxOIndex 1) (UTxOIndex 2)
@@ -1823,8 +1764,8 @@ referenceInputUnspend =
 
       txs' <- withBabbageLedgerState interpreter $ \st -> do
         tx0 <- Babbage.mkLockByScriptTx (UTxOIndex 0)
-                [ Babbage.TxOutInline True Babbage.InlineDatum (Babbage.ReferenceScript True)
-                , Babbage.TxOutInline True Babbage.InlineDatum (Babbage.ReferenceScript True)]
+                [ Babbage.TxOutInline True True (Babbage.ReferenceScript True)
+                , Babbage.TxOutInline True True (Babbage.ReferenceScript True)]
                 20000 20000 st
 
         let (utxo0 : utxo1 : _)  = Babbage.mkUTxOBabbage tx0
@@ -1846,7 +1787,7 @@ supplyScriptsTwoWays =
 
       tx0 <- withBabbageLedgerState interpreter
         $ Babbage.mkLockByScriptTx (UTxOIndex 0)
-                [ Babbage.TxOutInline True Babbage.InlineDatum (Babbage.ReferenceScript True)
+                [ Babbage.TxOutInline True True (Babbage.ReferenceScript True)
                 , Babbage.TxOutNoInline True]
                 20000 20000
       void $ forgeNextFindLeaderAndSubmit interpreter mockServer [TxBabbage tx0]
@@ -1871,7 +1812,7 @@ supplyScriptsTwoWaysSameBlock =
       txs' <- withBabbageLedgerState interpreter $ \st -> do
         -- one script referenced and one for the witnesses
         tx0 <- Babbage.mkLockByScriptTx (UTxOIndex 0)
-                [ Babbage.TxOutInline True Babbage.InlineDatum (Babbage.ReferenceScript True)
+                [ Babbage.TxOutInline True True (Babbage.ReferenceScript True)
                 , Babbage.TxOutNoInline True]
                 20000 20000 st
 
@@ -1895,7 +1836,7 @@ referenceMintingScript =
       txs' <- withBabbageLedgerState interpreter $ \st -> do
         -- one script referenced and one for the witnesses
         tx0 <- Babbage.mkLockByScriptTx (UTxOIndex 0)
-                [ Babbage.TxOutInline True Babbage.InlineDatum (Babbage.ReferenceScript True)]
+                [ Babbage.TxOutInline True True (Babbage.ReferenceScript True)]
                 20000 20000 st
 
         let utxo0 = head $ Babbage.mkUTxOBabbage tx0
@@ -1920,7 +1861,7 @@ referenceDelegation =
       txs' <- withBabbageLedgerState interpreter $ \st -> do
         -- one script referenced and one for the witnesses
         tx0 <- Babbage.mkLockByScriptTx (UTxOIndex 0)
-                [ Babbage.TxOutInline True Babbage.InlineDatum (Babbage.ReferenceScript True)]
+                [ Babbage.TxOutInline True True (Babbage.ReferenceScript True)]
                 20000 20000 st
 
         let utxo0 = head $ Babbage.mkUTxOBabbage tx0

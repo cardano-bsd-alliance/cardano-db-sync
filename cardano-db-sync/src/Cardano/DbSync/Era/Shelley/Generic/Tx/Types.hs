@@ -45,7 +45,7 @@ data Tx = Tx
   , txReferenceInputs :: ![TxIn]
   , txOutputs :: ![TxOut]
   , txCollateralOutputs :: ![TxOut]
-  , txFees :: !(Maybe Coin) -- Nothing means it needs to be computed by inSum - outSum and happens on phase 2 failures.
+  , txFees :: !(Maybe Coin)
   , txOutSum :: !Coin
   , txInvalidBefore :: !(Maybe SlotNo)
   , txInvalidHereafter :: !(Maybe SlotNo)
